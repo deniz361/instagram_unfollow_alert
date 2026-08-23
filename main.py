@@ -79,6 +79,7 @@ if __name__ == "__main__":
             if unfollowed_people:
                 message = "Unfollowed you:\n" + "\n".join(unfollowed_people)
                 checker.send_push_notification(message, ntfy_topic)
+                checker.update_csv(current_followers)
             else:
                 checker.send_push_notification("No unfollows", ntfy_topic)
             
