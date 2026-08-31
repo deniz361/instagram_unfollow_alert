@@ -697,7 +697,7 @@ def get_followers(
     username: str,
     *,
     profile_path: Union[Path, str] = DEFAULT_PROFILE_PATH,
-    headless: bool = False,
+    headless: bool = True,
     login_wait_seconds: float = 0,
     scroll_wait_ms: int = 2000,
     stable_bottom_rounds: int = 5,
@@ -797,11 +797,7 @@ def _configured_path(name: str, default: Path) -> Path:
 
 
 def _notification_topic() -> Optional[str]:
-    return (
-        os.getenv("NTFY_TOPIC")
-        or os.getenv("NFTY_TOPIC_INSTAGRAM")
-        or os.getenv("TOPIC")
-    )
+    return os.getenv("NTFY_TOPIC")
 
 
 def _report_and_notify(message: str, topic: Optional[str]) -> None:
@@ -824,7 +820,7 @@ def run() -> None:
     result = get_followers(
         username,
         profile_path=profile_path,
-        headless=_environment_bool("INSTAGRAM_HEADLESS", False),
+        headless=_environment_bool("INSTAGRAM_HEADLESS", True),
         login_wait_seconds=float(os.getenv("INSTAGRAM_LOGIN_WAIT_SECONDS", "0")),
         scroll_wait_ms=int(os.getenv("INSTAGRAM_SCROLL_WAIT_MS", "2000")),
         stable_bottom_rounds=int(
@@ -862,7 +858,8 @@ def run() -> None:
                 "Unfollowed you:\n" + "\n".join(sorted(unfollowed)), topic
             )
         else:
-            print("No unfollows")
+            _report_and_notify("No unfollows", topic)
+
 
         if new_followers:
             print("New followers:\n" + "\n".join(sorted(new_followers)))
