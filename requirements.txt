@@ -1,2 +1,2 @@
-instaloader=4.15.3
-requests
+cloakbrowser>=0.5.10,<1
+requests>=2.31,<3

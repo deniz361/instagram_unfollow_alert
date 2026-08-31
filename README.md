@@ -1,19 +1,23 @@
 # Instagram Unfollow Alert
 
-A small Python script that checks an Instagram account's followers once every 24 hours and sends the result to an [ntfy](https://ntfy.sh/) topic.
+This script opens your Instagram profile in a persistent CloakBrowser session,
+clicks **followers**, scrolls the followers window to its verified end, collects
+the usernames, and compares them with `followers.csv`.
 
-## How It Works
+It prints new followers and unfollows. If an ntfy topic is configured, unfollow
+alerts and failures are also sent there.
 
-On startup, the script:
+## Safety
 
-1. Loads an existing Instaloader session for the Instagram username.
-2. Reads the previous follower baseline from `followers.csv`.
-3. Fetches the account's current followers.
-4. Sends either a list of accounts that no longer follow you or `No unfollows` to ntfy.
-5. If an unfollow is detected, updates `followers.csv` with the current follower list.
-6. Waits 24 hours and repeats the check.
+`followers.csv` is replaced only after a complete scrape. The script requires
+the real modal scroller to be at the bottom with stable content and, when
+Instagram exposes a follower count, verifies that at least that many usernames
+were collected. Instagram's profile counter can briefly lag behind its follower
+rows; a larger verified modal result is kept with a warning instead of dropping
+a real username. An empty or partial scrape therefore cannot erase a valid
+baseline or create a mass false-unfollow alert.
 
-The CSV contains one Instagram username per row, for example:
+The CSV is written atomically and contains one normalized username per row:
 
 ```csv
 username_one
@@ -21,66 +25,103 @@ username_two
 username_three
 ```
 
-## Requirements
+## Install
 
-- Python 3
-- An Instagram account and an Instaloader session file
-- An ntfy topic
+Requirements:
 
-Install the dependencies with:
+- Python 3.9 or newer
+- The Instagram account whose followers are being monitored
+- A graphical session for the first login
+
+Install the Python dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-## Instaloader Session
+CloakBrowser downloads its Chromium binary on first use. The browser profile is
+stored in `cloak_profile/`, so the Instagram login survives later runs.
 
-The script expects an Instaloader session file at:
+## First Run and Login
 
-```text
-/root/.config/instaloader/session-<USERNAME>
-```
-
-Create the session before running the monitor. For example:
+Set the account whose profile should be checked. A leading `@` is accepted.
 
 ```bash
-instaloader --login <USERNAME>
-```
-
-If Instaloader stores the session elsewhere, update `load_session()` in `main.py` to use that path.
-
-## Configuration
-
-Set these environment variables before starting the script:
-
-| Variable | Description |
-| --- | --- |
-| `USERNAME` | Instagram username whose followers should be checked |
-| `TOPIC` | ntfy topic name used for notifications |
-
-Example:
-
-```bash
-export USERNAME="your_instagram_username"
-export TOPIC="your_private_ntfy_topic"
+export INSTAGRAM_USERNAME="your_instagram_username"
+export INSTAGRAM_LOGIN_WAIT_SECONDS=300
 python3 main.py
 ```
 
-Subscribe to the same topic in the ntfy app or at `https://ntfy.sh/<TOPIC>` to receive notifications.
+If Instagram asks you to log in, complete the login in the opened browser. The
+script waits up to five minutes and then continues to the profile. After that,
+the persisted session normally lets you omit `INSTAGRAM_LOGIN_WAIT_SECONDS`.
+The saved browser session must be signed into the same account named by
+`INSTAGRAM_USERNAME`; otherwise Instagram can expose only part of that account's
+follower list. If another account is active, the script waits for you to switch
+accounts and open the monitored account's profile during this first-run window.
 
-## Running Continuously
+`scraping_method.py` remains available as a compatibility entrypoint and runs
+the same implementation.
 
-The program runs indefinitely and sleeps for 24 hours between checks. Run it in a process manager, container, or persistent terminal session so it stays available.
+## Comparison Behavior
 
-## Important Notes
+- If `followers.csv` does not exist, the first complete scrape creates it as the
+  initial baseline.
+- On later runs, `old - current` is reported as unfollows and `current - old` is
+  printed as new followers.
+- Every complete run refreshes the CSV, including runs with additions only.
+- A failed, timed-out, logged-out, or incomplete scrape leaves the existing CSV
+  untouched.
 
-- The Instagram session must already be authenticated before running the script.
-- `TOPIC` should be difficult to guess because ntfy topics are publicly addressable unless protected separately.
-- `followers.csv` is used as the comparison baseline and must be populated before the first run.
-- When an unfollow is detected, the script automatically replaces `followers.csv` with the current follower list, preventing the same unfollow from being reported again on the next check.
-- When no unfollows are detected, the existing CSV baseline is left unchanged.
-- Instagram or Instaloader rate limits and authentication failures can prevent a check from completing.
+## Optional Notifications
 
-## License
+Set an ntfy topic to receive unfollow alerts and scraper failures:
 
-No license has been specified for this project.
+```bash
+export NTFY_TOPIC="your_private_ntfy_topic"
+```
+
+Use a difficult-to-guess topic unless your ntfy server protects it. The legacy
+variables `NFTY_TOPIC_INSTAGRAM` and `TOPIC` are also accepted.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `INSTAGRAM_USERNAME` | required | Instagram profile to check; `USERNAME` is also accepted |
+| `NTFY_TOPIC` | unset | Optional ntfy topic |
+| `INSTAGRAM_LOGIN_WAIT_SECONDS` | `0` | Time allowed for an interactive login |
+| `INSTAGRAM_HEADLESS` | `false` | Run without a visible browser after login is established |
+| `INSTAGRAM_PROFILE_PATH` | `cloak_profile/` | Persistent browser profile directory |
+| `FOLLOWERS_CSV` | `followers.csv` | Baseline CSV path |
+| `INSTAGRAM_SCROLL_WAIT_MS` | `2000` | Lazy-load wait after each modal scroll |
+| `INSTAGRAM_STABLE_BOTTOM_ROUNDS` | `5` | Required unchanged checks at the real bottom |
+| `INSTAGRAM_MAX_SCROLL_ROUNDS` | `2000` | Hard scroll-round limit |
+| `INSTAGRAM_STALLED_BOTTOM_RETRIES` | `5` | Back-off retries when the modal stalls below the profile count |
+| `INSTAGRAM_SCRAPE_TIMEOUT` | `3600` | Overall scrape timeout in seconds |
+
+Relative profile and CSV paths are resolved from the repository directory, not
+the shell's current directory. This prevents a scheduled job from accidentally
+creating a second baseline somewhere else.
+
+If Instagram does not expose an exact count, the run stops without changing the
+baseline. Inspect the visible browser and retry; unknown-count results are never
+used as a new baseline.
+
+When an unfollow alert is due and ntfy delivery fails, the CSV is deliberately
+left unchanged so the alert can be retried on the next run.
+
+## Run Regularly
+
+The command performs one check and exits. Schedule it with cron, launchd,
+systemd, or another job runner. Start with headed mode; once the saved session
+is working, `INSTAGRAM_HEADLESS=1` can be used if Instagram accepts it.
+
+## Tests
+
+The offline test suite covers CSV integrity, href filtering, set comparison,
+partial-scrape rejection, atomic replacement, and delayed modal loading:
+
+```bash
+python3 -B -m unittest discover -s tests -v
+```
